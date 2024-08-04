@@ -6,7 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	internalcontext "github.com/aws/aws-sdk-go-v2/internal/context"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/middleware"
@@ -86,7 +91,83 @@ type PutObjectInput struct {
 	Body io.Reader
 
 	// Indicates the algorithm used to create the checksum for the object
-	ChecksumAlgorithm ChecksumAlgorithm
+	ChecksumAlgorithm types.ChecksumAlgorithm
+
+	// Specifies the algorithm to use when encrypting the object (for example, AES256 ).
+	//
+	// This functionality is not supported for directory buckets.
+	SSECustomerAlgorithm *string
+
+	// Specifies the customer-provided encryption key for Amazon S3 to use in
+	// encrypting data. This value is used to store the object and then it is
+	// discarded; Amazon S3 does not store the encryption key. The key must be
+	// appropriate for use with the algorithm specified in the
+	// x-amz-server-side-encryption-customer-algorithm header.
+	//
+	// This functionality is not supported for directory buckets.
+	SSECustomerKey *string
+
+	// Specifies the 128-bit MD5 digest of the encryption key according to RFC 1321.
+	// Amazon S3 uses this header for a message integrity check to ensure that the
+	// encryption key was transmitted without error.
+	//
+	// This functionality is not supported for directory buckets.
+	SSECustomerKeyMD5 *string
+
+	// If x-amz-server-side-encryption has a valid value of aws:kms or aws:kms:dsse ,
+	// this header specifies the ID (Key ID, Key ARN, or Key Alias) of the Key
+	// Management Service (KMS) symmetric encryption customer managed key that was used
+	// for the object. If you specify x-amz-server-side-encryption:aws:kms or
+	// x-amz-server-side-encryption:aws:kms:dsse , but do not provide
+	// x-amz-server-side-encryption-aws-kms-key-id , Amazon S3 uses the Amazon Web
+	// Services managed key ( aws/s3 ) to protect the data. If the KMS key does not
+	// exist in the same account that's issuing the command, you must use the full ARN
+	// and not just the ID.
+	//
+	// This functionality is not supported for directory buckets.
+	SSEKMSKeyId *string
+
+	// Confirms that the requester knows that they will be charged for the request.
+	// Bucket owners need not specify this parameter in their requests. If either the
+	// source or destination S3 bucket has Requester Pays enabled, the requester will
+	// pay for corresponding charges to copy the object. For information about
+	// downloading objects from Requester Pays buckets, see [Downloading Objects in Requester Pays Buckets]in the Amazon S3 User
+	// Guide.
+	//
+	// This functionality is not supported for directory buckets.
+	//
+	// [Downloading Objects in Requester Pays Buckets]: https://docs.aws.amazon.com/AmazonS3/latest/dev/ObjectsinRequesterPaysBuckets.html
+	RequestPayer types.RequestPayer
+
+	// The account ID of the expected bucket owner. If the account ID that you provide
+	// does not match the actual owner of the bucket, the request fails with the HTTP
+	// status code 403 Forbidden (access denied).
+	ExpectedBucketOwner *string
+
+	// The server-side encryption algorithm that was used when you store this object
+	// in Amazon S3 (for example, AES256 , aws:kms , aws:kms:dsse ).
+	//
+	// General purpose buckets - You have four mutually exclusive options to protect
+	// data using server-side encryption in Amazon S3, depending on how you choose to
+	// manage the encryption keys. Specifically, the encryption key options are Amazon
+	// S3 managed keys (SSE-S3), Amazon Web Services KMS keys (SSE-KMS or DSSE-KMS),
+	// and customer-provided keys (SSE-C). Amazon S3 encrypts data with server-side
+	// encryption by using Amazon S3 managed keys (SSE-S3) by default. You can
+	// optionally tell Amazon S3 to encrypt data at rest by using server-side
+	// encryption with other key options. For more information, see [Using Server-Side Encryption]in the Amazon S3
+	// User Guide.
+	//
+	// Directory buckets - For directory buckets, only the server-side encryption with
+	// Amazon S3 managed keys (SSE-S3) ( AES256 ) value is supported.
+	//
+	// [Using Server-Side Encryption]: https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingServerSideEncryption.html
+	ServerSideEncryption types.ServerSideEncryption
+
+	// A standard MIME type describing the format of the contents. For more
+	// information, see [https://www.rfc-editor.org/rfc/rfc9110.html#name-content-type].
+	//
+	// [https://www.rfc-editor.org/rfc/rfc9110.html#name-content-type]: https://www.rfc-editor.org/rfc/rfc9110.html#name-content-type
+	ContentType *string
 }
 
 // PutObjectOutput represents a response from the PutObject() call.
@@ -128,6 +209,9 @@ type PutObjectOutput struct {
 	// (expiry-date) and rule ID (rule-id). The value of rule-id is URL encoded.
 	Expiration *string
 
+	// The bucket where the newly created object is put
+	Bucket *string
+
 	// The object key of the newly created object.
 	Key *string
 
@@ -152,7 +236,8 @@ type PutObjectOutput struct {
 	VersionID *string
 }
 
-func (c *Client) Upload(ctx context.Context, input *PutObjectInput, opts ...func(*Options)) (*PutObjectOutput, error) {
+func (c Client) Upload(ctx context.Context, input *PutObjectInput, opts ...func(*Options)) (*PutObjectOutput, error) {
+	i := uploader{in: input, cfg: c, ctx: ctx}
 	// Copy ClientOptions
 	clientOptions := make([]func(*s3.Options), 0, len(c.options.PutClientOptions)+1)
 	clientOptions = append(clientOptions, func(o *s3.Options) {
@@ -165,28 +250,25 @@ func (c *Client) Upload(ctx context.Context, input *PutObjectInput, opts ...func
 		)
 	})
 	clientOptions = append(clientOptions, c.options.PutClientOptions...)
-	c.options.PutClientOptions = clientOptions
+	i.cfg.options.PutClientOptions = clientOptions
 	for _, opt := range opts {
-		opt(&c.options)
+		opt(&i.cfg.options)
 	}
-
-	i := uploader{in: input, cfg: c, ctx: ctx}
 
 	return i.upload()
 }
 
 type uploader struct {
 	ctx context.Context
-	cfg *Client
+	cfg Client
 
 	in *PutObjectInput
 
-	readerPos int64 // current reader position
-	totalSize int64 // set to -1 if the size is not known
+	//totalSize int64 // set to -1 if the size is not known
 }
 
 func (u *uploader) upload() (*PutObjectOutput, error) {
-	if err := u.cfg.options.init(); err != nil {
+	if err := u.init(); err != nil {
 		return nil, fmt.Errorf("unable to initialize upload: %w", err)
 	}
 	defer u.cfg.options.partPool.Close()
@@ -206,45 +288,144 @@ func (u *uploader) upload() (*PutObjectOutput, error) {
 	return mu.upload(r, cleanUp)
 }
 
+func (u *uploader) init() error {
+	if err := validateSupportedARNType(aws.ToString(u.in.Bucket)); err != nil {
+		return err
+	}
+
+	o := &u.cfg.options
+	if o.S3 == nil {
+		cfg, err := config.LoadDefaultConfig(context.TODO())
+		if err != nil {
+			return fmt.Errorf("error while creating default s3 cfg: %q", err)
+		}
+		o.S3 = s3.NewFromConfig(cfg)
+	}
+
+	if o.Concurrency == 0 {
+		o.Concurrency = DefaultTransferConcurrency
+	}
+	if o.PartSizeBytes == 0 {
+		o.PartSizeBytes = DefaultPartSizeBytes
+	} else if o.PartSizeBytes < DefaultPartSizeBytes {
+		return fmt.Errorf("part size must be at least %d bytes", DefaultPartSizeBytes)
+	}
+	if o.MaxUploadParts == 0 {
+		o.MaxUploadParts = DefaultMaxUploadParts
+	} else if o.MaxUploadParts > DefaultMaxUploadParts {
+		return fmt.Errorf("max upload parts must be at most %d bytes", DefaultMaxUploadParts)
+	}
+	if err := u.initSize(); err != nil {
+		return err
+	}
+	if o.ChecksumAlgorithm == "" {
+		o.ChecksumAlgorithm = types.ChecksumAlgorithmCrc32
+	}
+
+	// If PartSize was changed or partPool was never setup then we need to allocated a new pool
+	// so that we return []byte slices of the correct size
+	poolCap := o.Concurrency + 1
+	if o.partPool == nil || o.partPool.SliceSize() != o.PartSizeBytes {
+		o.partPool = newByteSlicePool(o.PartSizeBytes)
+		o.partPool.ModifyCapacity(poolCap)
+	} else {
+		o.partPool = &returnCapacityPoolCloser{byteSlicePool: o.partPool}
+		o.partPool.ModifyCapacity(poolCap)
+	}
+
+	return nil
+}
+
+// initSize tries to detect the total stream size, setting u.totalSize. If
+// the size is not known, totalSize is set to -1.
+func (u *uploader) initSize() error {
+
+	switch r := u.in.Body.(type) {
+	case io.Seeker:
+		totalSize, err := seekerLen(r)
+		if err != nil {
+			return err
+		}
+
+		// Try to adjust partSize if it is too small and account for
+		// integer division truncation.
+		if totalSize/u.cfg.options.PartSizeBytes >= int64(u.cfg.options.MaxUploadParts) {
+			// Add one to the part size to account for remainders
+			// during the size calculation. e.g odd number of bytes.
+			u.cfg.options.PartSizeBytes = (totalSize / int64(u.cfg.options.MaxUploadParts)) + 1
+		}
+	}
+
+	return nil
+}
+
+func getLen(in *PutObjectInput) (int64, error) {
+	b := &bytes.Buffer{}
+	n, err := io.Copy(b, in.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	in.Body = bytes.NewReader(b.Bytes())
+	return n, nil
+}
+
 func (u *uploader) singleUpload(r io.Reader, cleanUp func()) (*PutObjectOutput, error) {
 	defer cleanUp()
 
 	var params s3.PutObjectInput
-	awsutil.Copy(params, u.in)
+	awsutil.Copy(&params, u.in)
+	params.Body = r
 
-	var locationRecorder wrappedLocationClient
-	resp, err := u.cfg.options.S3.PutObject(u.ctx, &params, append(u.cfg.options.PutClientOptions, locationRecorder.wrapClient())...)
+	var locationRecorder recordLocationClient
+	out, err := u.cfg.options.S3.PutObject(u.ctx, &params, append(u.cfg.options.PutClientOptions, locationRecorder.WrapClient())...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &PutObjectOutput{}, nil
+	return &PutObjectOutput{
+		Location: locationRecorder.location,
+
+		BucketKeyEnabled:     aws.ToBool(out.BucketKeyEnabled),
+		ChecksumCRC32:        out.ChecksumCRC32,
+		ChecksumCRC32C:       out.ChecksumCRC32C,
+		ChecksumSHA1:         out.ChecksumSHA1,
+		ChecksumSHA256:       out.ChecksumSHA256,
+		ETag:                 out.ETag,
+		Expiration:           out.Expiration,
+		Bucket:               params.Bucket,
+		Key:                  params.Key,
+		RequestCharged:       out.RequestCharged,
+		SSEKMSKeyId:          out.SSEKMSKeyId,
+		ServerSideEncryption: out.ServerSideEncryption,
+		VersionID:            out.VersionId,
+	}, nil
 }
 
 type httpClient interface {
 	Do(r *http.Request) (*http.Response, error)
 }
 
-type wrappedLocationClient struct {
+type recordLocationClient struct {
 	httpClient
 	location string
 }
 
-func (c *wrappedLocationClient) wrapClient() func(*s3.Options) {
+func (c *recordLocationClient) WrapClient() func(*s3.Options) {
 	return func(o *s3.Options) {
 		c.httpClient = o.HTTPClient
 		o.HTTPClient = c
 	}
 }
 
-func (c *wrappedLocationClient) Do(r *http.Request) (resp *http.Response, err error) {
+func (c *recordLocationClient) Do(r *http.Request) (resp *http.Response, err error) {
 	resp, err = c.httpClient.Do(r)
 	if err != nil {
 		return resp, err
 	}
 
 	if resp.Request != nil && resp.Request.URL != nil {
-		url = *resp.Request.URL
+		url := *resp.Request.URL
 		url.RawQuery = ""
 		c.location = url.String()
 	}
@@ -260,12 +441,10 @@ func (u *uploader) nextReader() (io.Reader, int, func(), error) {
 
 	n, err := readFillBuf(u.in.Body, *part)
 
-	u.readerPos += int64(n)
-
-	cleanUp := func() {
+	cleanup := func() {
 		u.cfg.options.partPool.Put(part)
 	}
-	return bytes.NewReader((*part)[0:n]), n, cleanUp, err
+	return bytes.NewReader((*part)[0:n]), n, cleanup, err
 }
 
 func readFillBuf(r io.Reader, b []byte) (offset int, err error) {
@@ -282,8 +461,14 @@ type multiUploader struct {
 	wg       sync.WaitGroup
 	m        sync.Mutex
 	err      error
-	uploadID string
+	uploadID *string
 	parts    completedParts
+}
+
+type ulChunk struct {
+	buf     io.Reader
+	partNum *int32
+	cleanup func()
 }
 
 type completedParts []types.CompletedPart
@@ -306,6 +491,217 @@ func (u *multiUploader) upload(firstBuf io.Reader, cleanup func()) (*PutObjectOu
 	var params s3.CreateMultipartUploadInput
 	awsutil.Copy(&params, u.uploader.in)
 
+	// Create a multipart
+	var locationRecorder recordLocationClient
+	resp, err := u.uploader.cfg.options.S3.CreateMultipartUpload(u.ctx, &params, append(u.cfg.options.PutClientOptions, locationRecorder.WrapClient())...)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	u.uploadID = resp.UploadId
+
+	ch := make(chan ulChunk, u.cfg.options.Concurrency)
+	for i := 0; i < u.cfg.options.Concurrency; i++ {
+		// launch workers
+		u.wg.Add(1)
+		go u.readChunk(ch)
+	}
+
+	var partNum int32 = 1
+	ch <- ulChunk{buf: firstBuf, partNum: aws.Int32(partNum), cleanup: cleanup}
+	for u.geterr() == nil && err == nil {
+		partNum++
+		var (
+			data         io.Reader
+			nextChunkLen int
+			ok           bool
+		)
+		data, nextChunkLen, cleanup, err = u.nextReader()
+		ok, err = u.shouldContinue(partNum, nextChunkLen, err)
+		if !ok {
+			cleanup()
+			if err != nil {
+				u.seterr(err)
+			}
+			break
+		}
+
+		ch <- ulChunk{buf: data, partNum: aws.Int32(partNum), cleanup: cleanup}
+	}
+
+	// close the channel, wait for workers and complete upload
+	close(ch)
+	u.wg.Wait()
+	completeOut := u.complete()
+
+	if err := u.geterr(); err != nil {
+		return nil, &multiUploadError{
+			err:      err,
+			uploadID: *u.uploadID,
+		}
+	}
+
+	return &PutObjectOutput{
+		Location:       locationRecorder.location,
+		UploadID:       *u.uploadID,
+		CompletedParts: u.parts,
+
+		BucketKeyEnabled:     aws.ToBool(completeOut.BucketKeyEnabled),
+		ChecksumCRC32:        completeOut.ChecksumCRC32,
+		ChecksumCRC32C:       completeOut.ChecksumCRC32C,
+		ChecksumSHA1:         completeOut.ChecksumSHA1,
+		ChecksumSHA256:       completeOut.ChecksumSHA256,
+		ETag:                 completeOut.ETag,
+		Expiration:           completeOut.Expiration,
+		Bucket:               params.Bucket,
+		Key:                  completeOut.Key,
+		RequestCharged:       completeOut.RequestCharged,
+		SSEKMSKeyId:          completeOut.SSEKMSKeyId,
+		ServerSideEncryption: completeOut.ServerSideEncryption,
+		VersionID:            completeOut.VersionId,
+	}, nil
+}
+
+func (u *multiUploader) shouldContinue(part int32, nextChunkLen int, err error) (bool, error) {
+	if err != nil && err != io.EOF {
+		return false, fmt.Errorf("read multipart upload data failed, %w", err)
+	}
+
+	if nextChunkLen == 0 {
+		// No need to upload empty part, if file was empty to start
+		// with empty single part would of been created and never
+		// started multipart upload.
+		return false, nil
+	}
+
+	// This upload exceeded maximum number of supported parts, error now.
+	if part > u.cfg.options.MaxUploadParts || part > DefaultMaxUploadParts {
+		var msg string
+		if part > u.cfg.options.MaxUploadParts {
+			msg = fmt.Sprintf("exceeded total allowed configured MaxUploadParts (%d). Adjust PartSize to fit in this limit",
+				u.cfg.options.MaxUploadParts)
+		} else {
+			msg = fmt.Sprintf("exceeded total allowed S3 limit MaxUploadParts (%d). Adjust PartSize to fit in this limit",
+				DefaultMaxUploadParts)
+		}
+		return false, fmt.Errorf(msg)
+	}
+
+	return true, err
+}
+
+// readChunk runs in worker goroutines to pull chunks off of the ch channel
+// and send() them as UploadPart requests.
+func (u *multiUploader) readChunk(ch chan ulChunk) {
+	defer u.wg.Done()
+	for {
+		data, ok := <-ch
+
+		if !ok {
+			break
+		}
+
+		if u.geterr() == nil {
+			if err := u.send(data); err != nil {
+				u.seterr(err)
+			}
+		}
+
+		data.cleanup()
+	}
+}
+
+// send performs an UploadPart request and keeps track of the completed
+// part information.
+func (u *multiUploader) send(c ulChunk) error {
+	params := &s3.UploadPartInput{
+		Bucket:               u.in.Bucket,
+		Key:                  u.in.Key,
+		Body:                 c.buf,
+		SSECustomerAlgorithm: u.in.SSECustomerAlgorithm,
+		SSECustomerKey:       u.in.SSECustomerKey,
+		SSECustomerKeyMD5:    u.in.SSECustomerKeyMD5,
+		ExpectedBucketOwner:  u.in.ExpectedBucketOwner,
+		RequestPayer:         u.in.RequestPayer,
+
+		ChecksumAlgorithm: u.in.ChecksumAlgorithm,
+		// Invalid to set any of the individual ChecksumXXX members from
+		// PutObject as they are never valid for individual parts of a
+		// multipart upload.
+
+		PartNumber: c.partNum,
+		UploadId:   u.uploadID,
+	}
+	// TODO should do copy then clear?
+
+	resp, err := u.cfg.options.S3.UploadPart(u.ctx, params, u.cfg.options.PutClientOptions...)
+	if err != nil {
+		return err
+	}
+
+	var completed types.CompletedPart
+	awsutil.Copy(&completed, resp)
+	completed.PartNumber = c.partNum
+
+	u.m.Lock()
+	u.parts = append(u.parts, completed)
+	u.m.Unlock()
+
+	return nil
+}
+
+// geterr is a thread-safe getter for the error object
+func (u *multiUploader) geterr() error {
+	u.m.Lock()
+	defer u.m.Unlock()
+
+	return u.err
+}
+
+// seterr is a thread-safe setter for the error object
+func (u *multiUploader) seterr(e error) {
+	u.m.Lock()
+	defer u.m.Unlock()
+
+	u.err = e
+}
+
+// fail will abort the multipart unless LeavePartsOnError is set to true.
+func (u *multiUploader) fail() {
+	params := &s3.AbortMultipartUploadInput{
+		Bucket:   u.in.Bucket,
+		Key:      u.in.Key,
+		UploadId: u.uploadID,
+	}
+	_, err := u.cfg.options.S3.AbortMultipartUpload(u.ctx, params, u.cfg.options.PutClientOptions...)
+	if err != nil {
+		//logMessage(u.cfg.S3, aws.LogDebug, fmt.Sprintf("failed to abort multipart upload, %v", err))
+		u.seterr(fmt.Errorf("failed to abort multipart upload (%v), triggered after multipart upload failed: %v", err, u.geterr()))
+	}
+}
+
+// complete successfully completes a multipart upload and returns the response.
+func (u *multiUploader) complete() *s3.CompleteMultipartUploadOutput {
+	if u.geterr() != nil {
+		u.fail()
+		return nil
+	}
+
+	// Parts must be sorted in PartNumber order.
+	sort.Sort(u.parts)
+
+	var params s3.CompleteMultipartUploadInput
+	awsutil.Copy(&params, u.in)
+	params.UploadId = u.uploadID
+	params.MultipartUpload = &types.CompletedMultipartUpload{Parts: u.parts}
+
+	resp, err := u.cfg.options.S3.CompleteMultipartUpload(u.ctx, &params, u.cfg.options.PutClientOptions...)
+	if err != nil {
+		u.seterr(err)
+		u.fail()
+	}
+
+	return resp
 }
 
 // setS3ExpressDefaultChecksum defaults to CRC32 for S3Express buckets,
