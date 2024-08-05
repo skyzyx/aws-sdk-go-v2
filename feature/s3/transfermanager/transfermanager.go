@@ -8,19 +8,22 @@ import (
 
 const userAgentKey = "s3-transfer"
 
-// MaxUploadParts is the maximum allowed number of parts in a multi-part upload
+// DefaultMaxUploadParts is the maximum allowed number of parts in a multi-part upload
 // on Amazon S3.
 const DefaultMaxUploadParts int32 = 10000
 
 // DefaultPartSizeBytes is the default part size when transferring objects to/from S3
 const DefaultPartSizeBytes int64 = 1024 * 1024 * 8
 
+// DefaultMPUThreshold is the default size threshold in bytes indicating when to use multipart upload.
 const DefaultMPUThreshold int64 = 1024 * 1024 * 16
 
 // DefaultTransferConcurrency is the default number of goroutines to spin up when
 // using PutObject().
 const DefaultTransferConcurrency = 5
 
+// Client provides the API client to make operations call for Amazon Simple
+// Storage Service's Transfer Manager
 type Client struct {
 	options Options
 }
@@ -44,6 +47,7 @@ func NewFromConfig(cfg aws.Config, optFns ...func(*Options)) *Client {
 	}, optFns...)
 }
 
+// Options provides params needed for transfer api calls
 type Options struct {
 	// The client to use when uploading to S3.
 	S3 S3APIClient

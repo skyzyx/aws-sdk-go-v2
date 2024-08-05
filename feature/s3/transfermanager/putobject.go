@@ -80,6 +80,7 @@ func (m *multiUploadError) UploadID() string {
 	return m.uploadID
 }
 
+// PutObjectInput represents a request to the Upload() call.
 type PutObjectInput struct {
 	// Bucket the object is uploaded into
 	Bucket *string
@@ -125,7 +126,7 @@ type PutObjectInput struct {
 	// and not just the ID.
 	//
 	// This functionality is not supported for directory buckets.
-	SSEKMSKeyId *string
+	SSEKMSKeyID *string
 
 	// Confirms that the requester knows that they will be charged for the request.
 	// Bucket owners need not specify this parameter in their requests. If either the
@@ -170,7 +171,7 @@ type PutObjectInput struct {
 	ContentType *string
 }
 
-// PutObjectOutput represents a response from the PutObject() call.
+// PutObjectOutput represents a response from the Upload() call.
 type PutObjectOutput struct {
 	// The URL where the object was uploaded to.
 	Location string
@@ -222,7 +223,7 @@ type PutObjectOutput struct {
 	// If present, specifies the ID of the Amazon Web Services Key Management Service
 	// (Amazon Web Services KMS) symmetric customer managed customer master key (CMK)
 	// that was used for the object.
-	SSEKMSKeyId *string
+	SSEKMSKeyID *string
 
 	// If you specified server-side encryption either with an Amazon S3-managed
 	// encryption key or an Amazon Web Services KMS customer master key (CMK) in your
@@ -236,6 +237,16 @@ type PutObjectOutput struct {
 	VersionID *string
 }
 
+// Upload uploads an object to S3, intelligently buffering large
+// files into smaller chunks and sending them in parallel across multiple
+// goroutines. You can configure the chunk size and concurrency through the
+// Options parameters.
+//
+// Additional functional options can be provided to configure the individual
+// upload. These options are copies of the Uploader instance Upload is called from.
+// Modifying the options will not impact the original Uploader instance.
+//
+// It is safe to call this method concurrently across goroutines.
 func (c Client) Upload(ctx context.Context, input *PutObjectInput, opts ...func(*Options)) (*PutObjectOutput, error) {
 	i := uploader{in: input, cfg: c, ctx: ctx}
 	// Copy ClientOptions
@@ -375,6 +386,7 @@ func (u *uploader) singleUpload(r io.Reader, cleanUp func()) (*PutObjectOutput, 
 
 	var params s3.PutObjectInput
 	awsutil.Copy(&params, u.in)
+	params.SSEKMSKeyId = u.in.SSEKMSKeyID
 	params.Body = r
 
 	var locationRecorder recordLocationClient
@@ -396,7 +408,7 @@ func (u *uploader) singleUpload(r io.Reader, cleanUp func()) (*PutObjectOutput, 
 		Bucket:               params.Bucket,
 		Key:                  params.Key,
 		RequestCharged:       out.RequestCharged,
-		SSEKMSKeyId:          out.SSEKMSKeyId,
+		SSEKMSKeyID:          out.SSEKMSKeyId,
 		ServerSideEncryption: out.ServerSideEncryption,
 		VersionID:            out.VersionId,
 	}, nil
@@ -490,6 +502,7 @@ func (cp completedParts) Swap(i, j int) {
 func (u *multiUploader) upload(firstBuf io.Reader, cleanup func()) (*PutObjectOutput, error) {
 	var params s3.CreateMultipartUploadInput
 	awsutil.Copy(&params, u.uploader.in)
+	params.SSEKMSKeyId = u.uploader.in.SSEKMSKeyID
 
 	// Create a multipart
 	var locationRecorder recordLocationClient
@@ -556,7 +569,7 @@ func (u *multiUploader) upload(firstBuf io.Reader, cleanup func()) (*PutObjectOu
 		Bucket:               params.Bucket,
 		Key:                  completeOut.Key,
 		RequestCharged:       completeOut.RequestCharged,
-		SSEKMSKeyId:          completeOut.SSEKMSKeyId,
+		SSEKMSKeyID:          completeOut.SSEKMSKeyId,
 		ServerSideEncryption: completeOut.ServerSideEncryption,
 		VersionID:            completeOut.VersionId,
 	}, nil
@@ -632,7 +645,6 @@ func (u *multiUploader) send(c ulChunk) error {
 		PartNumber: c.partNum,
 		UploadId:   u.uploadID,
 	}
-	// TODO should do copy then clear?
 
 	resp, err := u.cfg.options.S3.UploadPart(u.ctx, params, u.cfg.options.PutClientOptions...)
 	if err != nil {

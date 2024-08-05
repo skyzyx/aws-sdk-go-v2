@@ -42,7 +42,7 @@ func TestUploadOrderMulti(t *testing.T) {
 		Key:                  aws.String("Key - value"),
 		Body:                 bytes.NewReader(buf20MB),
 		ServerSideEncryption: "aws:kms",
-		SSEKMSKeyId:          aws.String("KmsId"),
+		SSEKMSKeyID:          aws.String("KmsId"),
 		ContentType:          aws.String("content/type"),
 	})
 
@@ -215,7 +215,7 @@ func TestUploadOrderSingle(t *testing.T) {
 		Key:                  aws.String("Key - value"),
 		Body:                 bytes.NewReader(buf2MB),
 		ServerSideEncryption: "aws:kms",
-		SSEKMSKeyId:          aws.String("KmsId"),
+		SSEKMSKeyID:          aws.String("KmsId"),
 		ContentType:          aws.String("content/type"),
 	})
 
