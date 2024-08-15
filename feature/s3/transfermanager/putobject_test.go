@@ -33,17 +33,15 @@ func getReaderLength(r io.Reader) int64 {
 
 func TestUploadOrderMulti(t *testing.T) {
 	c, invocations, args := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3: c,
-	})
+	mgr := New(c, Options{})
 
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket:               aws.String("Bucket"),
-		Key:                  aws.String("Key - value"),
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket:               "Bucket",
+		Key:                  "Key - value",
 		Body:                 bytes.NewReader(buf20MB),
 		ServerSideEncryption: "aws:kms",
-		SSEKMSKeyID:          aws.String("KmsId"),
-		ContentType:          aws.String("content/type"),
+		SSEKMSKeyID:          "KmsId",
+		ContentType:          "content/type",
 	})
 
 	if err != nil {
@@ -54,16 +52,12 @@ func TestUploadOrderMulti(t *testing.T) {
 		t.Errorf(diff)
 	}
 
-	if e, a := `https://mock.amazonaws.com/key`, resp.Location; e != a {
-		t.Errorf("expect %q, got %q", e, a)
-	}
-
 	if "UPLOAD-ID" != resp.UploadID {
 		t.Errorf("expect %q, got %q", "UPLOAD-ID", resp.UploadID)
 	}
 
-	if "VERSION-ID" != *resp.VersionID {
-		t.Errorf("expect %q, got %q", "VERSION-ID", *resp.VersionID)
+	if "VERSION-ID" != resp.VersionID {
+		t.Errorf("expect %q, got %q", "VERSION-ID", resp.VersionID)
 	}
 
 	// Validate input values
@@ -115,14 +109,14 @@ func TestUploadOrderMulti(t *testing.T) {
 
 func TestUploadOrderMultiDifferentPartSize(t *testing.T) {
 	c, ops, args := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3:            c,
+	mgr := New(c, Options{
 		PartSizeBytes: 1024 * 1024 * 11,
 		Concurrency:   1,
 	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(buf20MB),
 	})
 
@@ -144,51 +138,14 @@ func TestUploadOrderMultiDifferentPartSize(t *testing.T) {
 	}
 }
 
-func TestUploadIncreasePartSize(t *testing.T) {
-	c, invocations, args := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
-		o.Concurrency = 1
-		o.MaxUploadParts = 2
-	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
-		Body:   bytes.NewReader(buf20MB),
-	})
-
-	if err != nil {
-		t.Errorf("expect no error, got %v", err)
-	}
-
-	if mgr.options.PartSizeBytes != 0 {
-		t.Errorf("expect 0, got %d", mgr.options.PartSizeBytes)
-	}
-
-	if diff := cmpDiff([]string{"CreateMultipartUpload", "UploadPart", "UploadPart", "CompleteMultipartUpload"}, *invocations); len(diff) > 0 {
-		t.Error(diff)
-	}
-
-	// Part lengths
-	if len := getReaderLength((*args)[1].(*s3.UploadPartInput).Body); (1024*1024*10)+1 != len {
-		t.Errorf("expect %d, got %d", (1024*1024*10)+1, len)
-	}
-
-	if len := getReaderLength((*args)[2].(*s3.UploadPartInput).Body); (1024*1024*10)-1 != len {
-		t.Errorf("expect %d, got %d", (1024*1024*10)-1, len)
-	}
-}
-
 func TestUploadFailIfPartSizeTooSmall(t *testing.T) {
-	mgr := New(Options{
-		S3: s3.New(s3.Options{}),
-	}, func(o *Options) {
-		o.PartSizeBytes = 5
-	})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(s3.New(s3.Options{}), Options{},
+		func(o *Options) {
+			o.PartSizeBytes = 5
+		})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(buf20MB),
 	})
 
@@ -199,7 +156,6 @@ func TestUploadFailIfPartSizeTooSmall(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected error, but received nil")
 	}
-
 	if e, a := "part size must be at least", err.Error(); !strings.Contains(a, e) {
 		t.Errorf("expect %v to be in %v", e, a)
 	}
@@ -207,16 +163,14 @@ func TestUploadFailIfPartSizeTooSmall(t *testing.T) {
 
 func TestUploadOrderSingle(t *testing.T) {
 	c, invocations, params := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3: c,
-	})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket:               aws.String("Bucket"),
-		Key:                  aws.String("Key - value"),
+	mgr := New(c, Options{})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket:               "Bucket",
+		Key:                  "Key - value",
 		Body:                 bytes.NewReader(buf2MB),
 		ServerSideEncryption: "aws:kms",
-		SSEKMSKeyID:          aws.String("KmsId"),
-		ContentType:          aws.String("content/type"),
+		SSEKMSKeyID:          "KmsId",
+		ContentType:          "content/type",
 	})
 
 	if err != nil {
@@ -227,12 +181,8 @@ func TestUploadOrderSingle(t *testing.T) {
 		t.Error(diff)
 	}
 
-	if e, a := `https://mock.amazonaws.com/key`, resp.Location; e != a {
-		t.Errorf("expect %q, got %q", e, a)
-	}
-
-	if e := "VERSION-ID"; e != *resp.VersionID {
-		t.Errorf("expect %q, got %q", e, *resp.VersionID)
+	if e := "VERSION-ID"; e != resp.VersionID {
+		t.Errorf("expect %q, got %q", e, resp.VersionID)
 	}
 
 	if len(resp.UploadID) > 0 {
@@ -261,12 +211,10 @@ func TestUploadSingleFailure(t *testing.T) {
 		return nil, fmt.Errorf("put object failure")
 	}
 
-	mgr := New(Options{
-		S3: c,
-	})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(buf2MB),
 	})
 
@@ -285,10 +233,10 @@ func TestUploadSingleFailure(t *testing.T) {
 
 func TestUploadOrderZero(t *testing.T) {
 	c, invocations, params := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(make([]byte, 0)),
 	})
 
@@ -298,10 +246,6 @@ func TestUploadOrderZero(t *testing.T) {
 
 	if diff := cmpDiff([]string{"PutObject"}, *invocations); len(diff) > 0 {
 		t.Error(diff)
-	}
-
-	if len(resp.Location) == 0 {
-		t.Error("expect Location to not be empty")
 	}
 
 	if len(resp.UploadID) > 0 {
@@ -323,14 +267,12 @@ func TestUploadOrderMultiFailure(t *testing.T) {
 		return &s3.UploadPartOutput{ETag: aws.String(fmt.Sprintf("ETAG%d", u.PartNum))}, nil
 	}
 
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
+	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 1
 	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(buf20MB),
 	})
 
@@ -350,14 +292,12 @@ func TestUploadOrderMultiFailureOnComplete(t *testing.T) {
 		return nil, fmt.Errorf("complete multipart error")
 	}
 
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
+	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 1
 	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(buf20MB),
 	})
 
@@ -378,10 +318,10 @@ func TestUploadOrderMultiFailureOnCreate(t *testing.T) {
 		return nil, fmt.Errorf("create multipart upload failure")
 	}
 
-	mgr := New(Options{S3: c})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(make([]byte, 1024*1024*12)),
 	})
 
@@ -409,10 +349,10 @@ func (f *failreader) Read(b []byte) (int, error) {
 
 func TestUploadOrderReadFail1(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &failreader{times: 1},
 	})
 	if err == nil {
@@ -430,14 +370,12 @@ func TestUploadOrderReadFail1(t *testing.T) {
 
 func TestUploadOrderReadFail2(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient([]string{"UploadPart"})
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
+	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 1
 	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &failreader{times: 2},
 	})
 	if err == nil {
@@ -478,10 +416,10 @@ func (s *sizedReader) Read(p []byte) (n int, err error) {
 
 func TestUploadOrderMultiBufferedReader(t *testing.T) {
 	c, invocations, params := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &sizedReader{size: 1024 * 1024 * 21},
 	})
 	if err != nil {
@@ -509,10 +447,10 @@ func TestUploadOrderMultiBufferedReader(t *testing.T) {
 
 func TestUploadOrderMultiBufferedReaderPartial(t *testing.T) {
 	c, invocations, params := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &sizedReader{size: 1024 * 1024 * 21, err: io.EOF},
 	})
 	if err != nil {
@@ -542,10 +480,10 @@ func TestUploadOrderMultiBufferedReaderPartial(t *testing.T) {
 // file size is the same as part size.
 func TestUploadOrderMultiBufferedReaderEOF(t *testing.T) {
 	c, invocations, params := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &sizedReader{size: 1024 * 1024 * 16, err: io.EOF},
 	})
 
@@ -571,42 +509,12 @@ func TestUploadOrderMultiBufferedReaderEOF(t *testing.T) {
 	}
 }
 
-func TestUploadOrderMultiBufferedReaderExceedTotalParts(t *testing.T) {
-	c, invocations, _ := s3testing.NewUploadLoggingClient([]string{"UploadPart"})
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
-		o.Concurrency = 1
-		o.MaxUploadParts = 2
-	})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
-		Body:   &sizedReader{size: 1024*1024*16 + 1},
-	})
-	if err == nil {
-		t.Fatal("expect error, got nil")
-	}
-
-	if resp != nil {
-		t.Errorf("expect nil, got %v", resp)
-	}
-
-	if diff := cmpDiff([]string{"CreateMultipartUpload", "AbortMultipartUpload"}, *invocations); len(diff) > 0 {
-		t.Error(diff)
-	}
-
-	if !strings.Contains(err.Error(), "configured MaxUploadParts (2)") {
-		t.Errorf("expect 'configured MaxUploadParts (2)', got %q", err.Error())
-	}
-}
-
 func TestUploadOrderSingleBufferedReader(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{S3: c})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   &sizedReader{size: 1024 * 1024 * 2},
 	})
 
@@ -618,10 +526,6 @@ func TestUploadOrderSingleBufferedReader(t *testing.T) {
 		t.Error(diff)
 	}
 
-	if len(resp.Location) == 0 {
-		t.Error("expect a value in Location")
-	}
-
 	if len(resp.UploadID) > 0 {
 		t.Errorf("expect no value, got %q", resp.UploadID)
 	}
@@ -630,10 +534,10 @@ func TestUploadOrderSingleBufferedReader(t *testing.T) {
 func TestUploadZeroLenObject(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
 
-	mgr := New(Options{S3: c})
-	resp, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	mgr := New(c, Options{})
+	resp, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   strings.NewReader(""),
 	})
 
@@ -642,11 +546,6 @@ func TestUploadZeroLenObject(t *testing.T) {
 	}
 	if diff := cmpDiff([]string{"PutObject"}, *invocations); len(diff) > 0 {
 		t.Errorf("expect request to have been made, but was not, %v", diff)
-	}
-
-	// TODO: not needed?
-	if len(resp.Location) == 0 {
-		t.Error("expect a non-empty string value for Location")
 	}
 
 	if len(resp.UploadID) > 0 {
@@ -669,15 +568,13 @@ func (r *testIncompleteReader) Read(p []byte) (n int, err error) {
 
 func TestUploadUnexpectedEOF(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
+	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 1
 		o.PartSizeBytes = DefaultPartSizeBytes
 	})
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body: &testIncompleteReader{
 			Size: DefaultPartSizeBytes + 1,
 		},
@@ -710,17 +607,15 @@ func TestSSE(t *testing.T) {
 		return &s3.UploadPartOutput{ETag: aws.String(fmt.Sprintf("ETAG%d", u.PartNum))}, nil
 	}
 
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
+	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 5
 	})
 
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket:               aws.String("Bucket"),
-		Key:                  aws.String("Key"),
-		SSECustomerAlgorithm: aws.String("AES256"),
-		SSECustomerKey:       aws.String("foo"),
+	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
+		Bucket:               "Bucket",
+		Key:                  "Key",
+		SSECustomerAlgorithm: "AES256",
+		SSECustomerKey:       "foo",
 		Body:                 bytes.NewBuffer(make([]byte, 1024*1024*10)),
 	})
 
@@ -730,20 +625,19 @@ func TestSSE(t *testing.T) {
 }
 
 func TestUploadWithContextCanceled(t *testing.T) {
-	u := New(Options{
-		S3: s3.New(s3.Options{
-			UsePathStyle: true,
-			Region:       "mock-region",
-		}),
+	c := s3.New(s3.Options{
+		UsePathStyle: true,
+		Region:       "mock-region",
 	})
+	u := New(c, Options{})
 
 	ctx := &awstesting.FakeContext{DoneCh: make(chan struct{})}
 	ctx.Error = fmt.Errorf("context canceled")
 	close(ctx.DoneCh)
 
-	_, err := u.Upload(ctx, &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
+	_, err := u.PutObject(ctx, &PutObjectInput{
+		Bucket: "Bucket",
+		Key:    "Key",
 		Body:   bytes.NewReader(make([]byte, 0)),
 	})
 	if err == nil {
@@ -752,42 +646,6 @@ func TestUploadWithContextCanceled(t *testing.T) {
 
 	if e, a := "canceled", err.Error(); !strings.Contains(a, e) {
 		t.Errorf("expected error message to contain %q, but did not %q", e, a)
-	}
-}
-
-func TestUploadMaxPartsEOF(t *testing.T) {
-	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
-	mgr := New(Options{
-		S3: c,
-	}, func(o *Options) {
-		o.Concurrency = 1
-		o.PartSizeBytes = DefaultPartSizeBytes
-		o.MaxUploadParts = 2
-	})
-	f := bytes.NewReader(make([]byte, int(mgr.options.PartSizeBytes)*int(mgr.options.MaxUploadParts)))
-
-	r1 := io.NewSectionReader(f, 0, DefaultPartSizeBytes)
-	r2 := io.NewSectionReader(f, DefaultPartSizeBytes, 2*DefaultPartSizeBytes)
-	body := io.MultiReader(r1, r2)
-
-	_, err := mgr.Upload(context.Background(), &PutObjectInput{
-		Bucket: aws.String("Bucket"),
-		Key:    aws.String("Key"),
-		Body:   body,
-	})
-
-	if err != nil {
-		t.Fatalf("expect no error, got %v", err)
-	}
-
-	expectOps := []string{
-		"CreateMultipartUpload",
-		"UploadPart",
-		"UploadPart",
-		"CompleteMultipartUpload",
-	}
-	if diff := cmpDiff(expectOps, *invocations); len(diff) > 0 {
-		t.Error(diff)
 	}
 }
 
@@ -833,23 +691,17 @@ func TestUploadRetry(t *testing.T) {
 			defer server.Close()
 
 			client := s3.New(s3.Options{
-				EndpointResolver: s3testing.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
-					return aws.Endpoint{
-						URL: server.URL,
-					}, nil
-				}),
-				UsePathStyle: true,
+				EndpointResolverV2: s3testing.EndpointResolverV2{URL: server.URL},
+				UsePathStyle:       true,
 				Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
 					o.MaxAttempts = retries + 1
 				}),
 			})
 
-			uploader := New(Options{
-				S3: client,
-			})
-			_, err := uploader.Upload(context.Background(), &PutObjectInput{
-				Bucket: aws.String("bucket"),
-				Key:    aws.String("key"),
+			uploader := New(client, Options{})
+			_, err := uploader.PutObject(context.Background(), &PutObjectInput{
+				Bucket: "bucket",
+				Key:    "key",
 				Body:   c.Body,
 			})
 

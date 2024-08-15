@@ -1,4 +1,3 @@
-
 package transfermanager
 
 import (
@@ -8,8 +7,8 @@ import (
 )
 
 type byteSlicePool interface {
-	Get(context.Context) (*[]byte, error)
-	Put(*[]byte)
+	Get(context.Context) ([]byte, error)
+	Put([]byte)
 	ModifyCapacity(int)
 	SliceSize() int64
 	Close()
@@ -21,7 +20,7 @@ type maxSlicePool struct {
 	// occur.
 	allocator sliceAllocator
 
-	slices         chan *[]byte
+	slices         chan []byte
 	allocations    chan struct{}
 	capacityChange chan struct{}
 
@@ -40,9 +39,7 @@ func newMaxSlicePool(sliceSize int64) *maxSlicePool {
 
 var errZeroCapacity = fmt.Errorf("get called on zero capacity pool")
 
-func (p *maxSlicePool) Get(ctx context.Context) (*[]byte, error) {
-	// check if context is canceled before attempting to get a slice
-	// this ensures priority is given to the cancel case first
+func (p *maxSlicePool) Get(ctx context.Context) ([]byte, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -110,7 +107,7 @@ func (p *maxSlicePool) Get(ctx context.Context) (*[]byte, error) {
 	}
 }
 
-func (p *maxSlicePool) Put(bs *[]byte) {
+func (p *maxSlicePool) Put(bs []byte) {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
@@ -161,7 +158,7 @@ func (p *maxSlicePool) ModifyCapacity(delta int) {
 	}
 
 	origSlices := p.slices
-	p.slices = make(chan *[]byte, p.max)
+	p.slices = make(chan []byte, p.max)
 	if origSlices == nil {
 		return
 	}
@@ -222,9 +219,9 @@ func (p *maxSlicePool) empty() {
 	}
 }
 
-func (p *maxSlicePool) newSlice() *[]byte {
+func (p *maxSlicePool) newSlice() []byte {
 	bs := make([]byte, p.sliceSize)
-	return &bs
+	return bs
 }
 
 type returnCapacityPoolCloser struct {
@@ -245,7 +242,7 @@ func (n *returnCapacityPoolCloser) Close() {
 	}
 }
 
-type sliceAllocator func() *[]byte
+type sliceAllocator func() []byte
 
 var newByteSlicePool = func(sliceSize int64) byteSlicePool {
 	return newMaxSlicePool(sliceSize)
