@@ -4,6 +4,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+// ChecksumAlgorithm indicates the algorithm used to create the checksum for the object
 type ChecksumAlgorithm string
 
 // Enum values for ChecksumAlgorithm
@@ -14,6 +15,8 @@ const (
 	ChecksumAlgorithmSha256 ChecksumAlgorithm = "SHA256"
 )
 
+// ObjectCannedACL defines the canned ACL to apply to the object, see [Canned ACL] in the
+// Amazon S3 User Guide.
 type ObjectCannedACL string
 
 // Enum values for ObjectCannedACL
@@ -43,6 +46,8 @@ func (ObjectCannedACL) Values() []ObjectCannedACL {
 	}
 }
 
+// ObjectLockLegalHoldStatus specifies whether a legal hold will be applied to this object. For more
+// information about S3 Object Lock, see [Object Lock] in the Amazon S3 User Guide.
 type ObjectLockLegalHoldStatus string
 
 // Enum values for ObjectLockLegalHoldStatus
@@ -51,6 +56,7 @@ const (
 	ObjectLockLegalHoldStatusOff ObjectLockLegalHoldStatus = "OFF"
 )
 
+// ObjectLockMode is the Object Lock mode that you want to apply to this object.
 type ObjectLockMode string
 
 // Enum values for ObjectLockMode
@@ -59,6 +65,12 @@ const (
 	ObjectLockModeCompliance ObjectLockMode = "COMPLIANCE"
 )
 
+// RequestPayer confirms that the requester knows that they will be charged for the request.
+// Bucket owners need not specify this parameter in their requests. If either the
+// source or destination S3 bucket has Requester Pays enabled, the requester will
+// pay for corresponding charges to copy the object. For information about
+// downloading objects from Requester Pays buckets, see [Downloading Objects in Requester Pays Buckets]in the Amazon S3 User
+// Guide.
 type RequestPayer string
 
 // Enum values for RequestPayer
@@ -66,6 +78,8 @@ const (
 	RequestPayerRequester RequestPayer = "requester"
 )
 
+// ServerSideEncryption indicates the server-side encryption algorithm that was used when you store this object
+// in Amazon S3 (for example, AES256 , aws:kms , aws:kms:dsse )
 type ServerSideEncryption string
 
 // Enum values for ServerSideEncryption
@@ -75,6 +89,9 @@ const (
 	ServerSideEncryptionAwsKmsDsse ServerSideEncryption = "aws:kms:dsse"
 )
 
+// StorageClass specifies class to store newly created
+// objects, which has default value of STANDARD. For more information, see
+// [Storage Classes] in the Amazon S3 User Guide.
 type StorageClass string
 
 // Enum values for StorageClass
@@ -92,7 +109,7 @@ const (
 	StorageClassExpressOnezone     StorageClass = "EXPRESS_ONEZONE"
 )
 
-// Details of the parts that were uploaded.
+// CompletedPart includes details of the parts that were uploaded.
 type CompletedPart struct {
 
 	// The base64-encoded, 32-bit CRC32 checksum of the object. This will only be
@@ -168,6 +185,8 @@ func (cp CompletedPart) mapCompletedPart() types.CompletedPart {
 	}
 }
 
+// RequestCharged, if present, indicates that the requester was successfully charged for the
+// request.
 type RequestCharged string
 
 // Enum values for RequestCharged

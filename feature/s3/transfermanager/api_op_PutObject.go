@@ -707,7 +707,7 @@ func (o *PutObjectOutput) mapFromCompleteMultipartUploadOutput(out *s3.CompleteM
 	o.ResultMetadata = out.ResultMetadata
 }
 
-// Upload uploads an object to S3, intelligently buffering large
+// PutObject uploads an object to S3, intelligently buffering large
 // files into smaller chunks and sending them in parallel across multiple
 // goroutines. You can configure the chunk size and concurrency through the
 // Options parameters.

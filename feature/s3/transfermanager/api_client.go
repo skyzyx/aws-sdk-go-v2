@@ -13,7 +13,7 @@ const DefaultMaxUploadParts int32 = 10000
 // DefaultPartSizeBytes is the default part size when transferring objects to/from S3
 const DefaultPartSizeBytes int64 = 1024 * 1024 * 8
 
-// DefaultMPUThreshold is the default size threshold in bytes indicating when to use multipart upload.
+// DefaultMultipartUploadThreshold is the default size threshold in bytes indicating when to use multipart upload.
 const DefaultMultipartUploadThreshold int64 = 1024 * 1024 * 16
 
 // DefaultTransferConcurrency is the default number of goroutines to spin up when
