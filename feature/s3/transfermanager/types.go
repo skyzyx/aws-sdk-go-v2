@@ -185,8 +185,7 @@ func (cp CompletedPart) mapCompletedPart() types.CompletedPart {
 	}
 }
 
-// RequestCharged, if present, indicates that the requester was successfully charged for the
-// request.
+// RequestCharged indicates that the requester was successfully charged for the request.
 type RequestCharged string
 
 // Enum values for RequestCharged
