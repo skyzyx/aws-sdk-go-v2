@@ -1,8 +1,138 @@
-package transfermanager
+package types
 
 import (
+	"io"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+// ReadSeekCloser wraps a io.Reader returning a ReaderSeekerCloser. Allows the
+// SDK to accept an io.Reader that is not also an io.Seeker for unsigned
+// streaming payload API operations.
+//
+// A readSeekCloser wrapping an nonseekable io.Reader used in an API operation's
+// input will prevent that operation being retried in the case of
+// network errors, and cause operation requests to fail if the operation
+// requires payload signing.
+func ReadSeekCloser(r io.Reader) *ReaderSeekerCloser {
+	return &ReaderSeekerCloser{r}
+}
+
+// ReaderSeekerCloser represents a reader that can also delegate io.Seeker and
+// io.Closer interfaces to the underlying object if they are available.
+type ReaderSeekerCloser struct {
+	r io.Reader
+}
+
+// SeekerLen attempts to get the number of bytes remaining at the seeker's
+// current position.  Returns the number of bytes remaining or error.
+func SeekerLen(s io.Seeker) (int64, error) {
+	// Determine if the seeker is actually seekable. ReaderSeekerCloser
+	// hides the fact that a io.Readers might not actually be seekable.
+	switch v := s.(type) {
+	case *ReaderSeekerCloser:
+		return v.GetLen()
+	}
+
+	return computeSeekerLength(s)
+}
+
+// GetLen returns the length of the bytes remaining in the underlying reader.
+// Checks first for Len(), then io.Seeker to determine the size of the
+// underlying reader.
+//
+// Will return -1 if the length cannot be determined.
+func (r *ReaderSeekerCloser) GetLen() (int64, error) {
+	if l, ok := r.HasLen(); ok {
+		return int64(l), nil
+	}
+
+	if s, ok := r.r.(io.Seeker); ok {
+		return computeSeekerLength(s)
+	}
+
+	return -1, nil
+}
+
+func computeSeekerLength(s io.Seeker) (int64, error) {
+	curOffset, err := s.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+
+	endOffset, err := s.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = s.Seek(curOffset, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+
+	return endOffset - curOffset, nil
+}
+
+// HasLen returns the length of the underlying reader if the value implements
+// the Len() int method.
+func (r *ReaderSeekerCloser) HasLen() (int, bool) {
+	type lenner interface {
+		Len() int
+	}
+
+	if lr, ok := r.r.(lenner); ok {
+		return lr.Len(), true
+	}
+
+	return 0, false
+}
+
+// Read reads from the reader up to size of p. The number of bytes read, and
+// error if it occurred will be returned.
+//
+// If the reader is not an io.Reader zero bytes read, and nil error will be
+// returned.
+//
+// Performs the same functionality as io.Reader Read
+func (r *ReaderSeekerCloser) Read(p []byte) (int, error) {
+	switch t := r.r.(type) {
+	case io.Reader:
+		return t.Read(p)
+	}
+	return 0, nil
+}
+
+// Seek sets the offset for the next Read to offset, interpreted according to
+// whence: 0 means relative to the origin of the file, 1 means relative to the
+// current offset, and 2 means relative to the end. Seek returns the new offset
+// and an error, if any.
+//
+// If the ReaderSeekerCloser is not an io.Seeker nothing will be done.
+func (r *ReaderSeekerCloser) Seek(offset int64, whence int) (int64, error) {
+	switch t := r.r.(type) {
+	case io.Seeker:
+		return t.Seek(offset, whence)
+	}
+	return int64(0), nil
+}
+
+// IsSeeker returns if the underlying reader is also a seeker.
+func (r *ReaderSeekerCloser) IsSeeker() bool {
+	_, ok := r.r.(io.Seeker)
+	return ok
+}
+
+// Close closes the ReaderSeekerCloser.
+//
+// If the ReaderSeekerCloser is not an io.Closer nothing will be done.
+func (r *ReaderSeekerCloser) Close() error {
+	switch t := r.r.(type) {
+	case io.Closer:
+		return t.Close()
+	}
+	return nil
+}
 
 // ChecksumAlgorithm indicates the algorithm used to create the checksum for the object
 type ChecksumAlgorithm string
@@ -10,9 +140,9 @@ type ChecksumAlgorithm string
 // Enum values for ChecksumAlgorithm
 const (
 	ChecksumAlgorithmCrc32  ChecksumAlgorithm = "CRC32"
-	ChecksumAlgorithmCrc32c ChecksumAlgorithm = "CRC32C"
-	ChecksumAlgorithmSha1   ChecksumAlgorithm = "SHA1"
-	ChecksumAlgorithmSha256 ChecksumAlgorithm = "SHA256"
+	ChecksumAlgorithmCrc32c                   = "CRC32C"
+	ChecksumAlgorithmSha1                     = "SHA1"
+	ChecksumAlgorithmSha256                   = "SHA256"
 )
 
 // ObjectCannedACL defines the canned ACL to apply to the object, see [Canned ACL] in the
@@ -22,12 +152,12 @@ type ObjectCannedACL string
 // Enum values for ObjectCannedACL
 const (
 	ObjectCannedACLPrivate                ObjectCannedACL = "private"
-	ObjectCannedACLPublicRead             ObjectCannedACL = "public-read"
-	ObjectCannedACLPublicReadWrite        ObjectCannedACL = "public-read-write"
-	ObjectCannedACLAuthenticatedRead      ObjectCannedACL = "authenticated-read"
-	ObjectCannedACLAwsExecRead            ObjectCannedACL = "aws-exec-read"
-	ObjectCannedACLBucketOwnerRead        ObjectCannedACL = "bucket-owner-read"
-	ObjectCannedACLBucketOwnerFullControl ObjectCannedACL = "bucket-owner-full-control"
+	ObjectCannedACLPublicRead                             = "public-read"
+	ObjectCannedACLPublicReadWrite                        = "public-read-write"
+	ObjectCannedACLAuthenticatedRead                      = "authenticated-read"
+	ObjectCannedACLAwsExecRead                            = "aws-exec-read"
+	ObjectCannedACLBucketOwnerRead                        = "bucket-owner-read"
+	ObjectCannedACLBucketOwnerFullControl                 = "bucket-owner-full-control"
 )
 
 // Values returns all known values for ObjectCannedACL. Note that this can be
@@ -53,7 +183,7 @@ type ObjectLockLegalHoldStatus string
 // Enum values for ObjectLockLegalHoldStatus
 const (
 	ObjectLockLegalHoldStatusOn  ObjectLockLegalHoldStatus = "ON"
-	ObjectLockLegalHoldStatusOff ObjectLockLegalHoldStatus = "OFF"
+	ObjectLockLegalHoldStatusOff                           = "OFF"
 )
 
 // ObjectLockMode is the Object Lock mode that you want to apply to this object.
@@ -62,7 +192,7 @@ type ObjectLockMode string
 // Enum values for ObjectLockMode
 const (
 	ObjectLockModeGovernance ObjectLockMode = "GOVERNANCE"
-	ObjectLockModeCompliance ObjectLockMode = "COMPLIANCE"
+	ObjectLockModeCompliance                = "COMPLIANCE"
 )
 
 // RequestPayer confirms that the requester knows that they will be charged for the request.
@@ -85,8 +215,8 @@ type ServerSideEncryption string
 // Enum values for ServerSideEncryption
 const (
 	ServerSideEncryptionAes256     ServerSideEncryption = "AES256"
-	ServerSideEncryptionAwsKms     ServerSideEncryption = "aws:kms"
-	ServerSideEncryptionAwsKmsDsse ServerSideEncryption = "aws:kms:dsse"
+	ServerSideEncryptionAwsKms                          = "aws:kms"
+	ServerSideEncryptionAwsKmsDsse                      = "aws:kms:dsse"
 )
 
 // StorageClass specifies class to store newly created
@@ -97,16 +227,16 @@ type StorageClass string
 // Enum values for StorageClass
 const (
 	StorageClassStandard           StorageClass = "STANDARD"
-	StorageClassReducedRedundancy  StorageClass = "REDUCED_REDUNDANCY"
-	StorageClassStandardIa         StorageClass = "STANDARD_IA"
-	StorageClassOnezoneIa          StorageClass = "ONEZONE_IA"
-	StorageClassIntelligentTiering StorageClass = "INTELLIGENT_TIERING"
-	StorageClassGlacier            StorageClass = "GLACIER"
-	StorageClassDeepArchive        StorageClass = "DEEP_ARCHIVE"
-	StorageClassOutposts           StorageClass = "OUTPOSTS"
-	StorageClassGlacierIr          StorageClass = "GLACIER_IR"
-	StorageClassSnow               StorageClass = "SNOW"
-	StorageClassExpressOnezone     StorageClass = "EXPRESS_ONEZONE"
+	StorageClassReducedRedundancy               = "REDUCED_REDUNDANCY"
+	StorageClassStandardIa                      = "STANDARD_IA"
+	StorageClassOnezoneIa                       = "ONEZONE_IA"
+	StorageClassIntelligentTiering              = "INTELLIGENT_TIERING"
+	StorageClassGlacier                         = "GLACIER"
+	StorageClassDeepArchive                     = "DEEP_ARCHIVE"
+	StorageClassOutposts                        = "OUTPOSTS"
+	StorageClassGlacierIr                       = "GLACIER_IR"
+	StorageClassSnow                            = "SNOW"
+	StorageClassExpressOnezone                  = "EXPRESS_ONEZONE"
 )
 
 // CompletedPart includes details of the parts that were uploaded.
@@ -174,7 +304,7 @@ type CompletedPart struct {
 	PartNumber *int32
 }
 
-func (cp CompletedPart) mapCompletedPart() types.CompletedPart {
+func (cp CompletedPart) MapCompletedPart() types.CompletedPart {
 	return types.CompletedPart{
 		ChecksumCRC32:  cp.ChecksumCRC32,
 		ChecksumCRC32C: cp.ChecksumCRC32C,
@@ -183,6 +313,15 @@ func (cp CompletedPart) mapCompletedPart() types.CompletedPart {
 		ETag:           cp.ETag,
 		PartNumber:     cp.PartNumber,
 	}
+}
+
+func (c *CompletedPart) MapFrom(resp *s3.UploadPartOutput, partNum *int32) {
+	c.ChecksumCRC32 = resp.ChecksumCRC32
+	c.ChecksumCRC32C = resp.ChecksumCRC32C
+	c.ChecksumSHA1 = resp.ChecksumSHA1
+	c.ChecksumSHA256 = resp.ChecksumSHA256
+	c.ETag = resp.ETag
+	c.PartNumber = partNum
 }
 
 // RequestCharged indicates that the requester was successfully charged for the request.

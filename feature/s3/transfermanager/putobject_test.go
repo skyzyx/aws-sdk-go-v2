@@ -570,13 +570,13 @@ func TestUploadUnexpectedEOF(t *testing.T) {
 	c, invocations, _ := s3testing.NewUploadLoggingClient(nil)
 	mgr := New(c, Options{}, func(o *Options) {
 		o.Concurrency = 1
-		o.PartSizeBytes = DefaultPartSizeBytes
+		o.PartSizeBytes = minPartSizeBytes
 	})
 	_, err := mgr.PutObject(context.Background(), &PutObjectInput{
 		Bucket: "Bucket",
 		Key:    "Key",
 		Body: &testIncompleteReader{
-			Size: DefaultPartSizeBytes + 1,
+			Size: minPartSizeBytes + 1,
 		},
 	})
 	if err == nil {
@@ -651,7 +651,7 @@ func TestUploadWithContextCanceled(t *testing.T) {
 
 func TestUploadRetry(t *testing.T) {
 	const part, retries = 3, 10
-	testFile, testFileCleanup, err := createTempFile(t, DefaultPartSizeBytes*part)
+	testFile, testFileCleanup, err := createTempFile(t, minPartSizeBytes*part)
 	if err != nil {
 		t.Fatalf("failed to create test file, %v", err)
 	}
@@ -662,13 +662,13 @@ func TestUploadRetry(t *testing.T) {
 		PartHandlers func(testing.TB) []http.Handler
 	}{
 		"bytes.Buffer": {
-			Body: bytes.NewBuffer(make([]byte, DefaultPartSizeBytes*part)),
+			Body: bytes.NewBuffer(make([]byte, minPartSizeBytes*part)),
 			PartHandlers: func(tb testing.TB) []http.Handler {
 				return buildFailHandlers(tb, part, retries)
 			},
 		},
 		"bytes.Reader": {
-			Body: bytes.NewReader(make([]byte, DefaultPartSizeBytes*part)),
+			Body: bytes.NewReader(make([]byte, minPartSizeBytes*part)),
 			PartHandlers: func(tb testing.TB) []http.Handler {
 				return buildFailHandlers(tb, part, retries)
 			},

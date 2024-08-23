@@ -5,15 +5,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithymiddleware "github.com/aws/smithy-go/middleware"
 )
 
@@ -24,10 +24,10 @@ import (
 //
 // Example:
 //
-//	u := manager.NewUploader(client)
-//	output, err := u.upload(context.Background(), input)
+//	c := transfermanager.New(client, opts)
+//	output, err := c.PutObject(context.Background(), input)
 //	if err != nil {
-//		var multierr manager.MultiUploadFailure
+//		var multierr transfermanager.MultipartUploadError
 //		if errors.As(err, &multierr) {
 //			fmt.Printf("upload failure UploadID=%s, %s\n", multierr.UploadID(), multierr.Error())
 //		} else {
@@ -41,11 +41,11 @@ type MultipartUploadError interface {
 	UploadID() string
 }
 
-// A multiUploadError wraps the upload ID of a failed s3 multipart upload.
+// A multipartUploadError wraps the upload ID of a failed s3 multipart upload.
 // Composed of BaseError for code, message, and original error
 //
 // Should be used for an error that occurred failing a S3 multipart upload,
-// and a upload ID is available. If an uploadID is not available a more relevant
+// and a upload ID is available.
 type multipartUploadError struct {
 	err error
 
@@ -53,7 +53,7 @@ type multipartUploadError struct {
 	uploadID string
 }
 
-// batchItemError returns the string representation of the error.
+// Error returns the string representation of the error.
 //
 // # See apierr.BaseError ErrorWithExtra for output format
 //
@@ -76,7 +76,7 @@ func (m *multipartUploadError) UploadID() string {
 	return m.uploadID
 }
 
-// PutObjectInput represents a request to the Upload() call.
+// PutObjectInput represents a request to the PutObject() call.
 type PutObjectInput struct {
 	// Bucket the object is uploaded into
 	Bucket string
@@ -114,7 +114,7 @@ type PutObjectInput struct {
 	// [Access Control List (ACL) Overview]: https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html
 	// [Canned ACL]: https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html#CannedACL
 	// [Controlling ownership of objects and disabling ACLs]: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
-	ACL ObjectCannedACL
+	ACL types.ObjectCannedACL
 
 	// Specifies whether Amazon S3 should use an S3 Bucket Key for object encryption
 	// with server-side encryption using Key Management Service (KMS) keys (SSE-KMS).
@@ -125,7 +125,7 @@ type PutObjectInput struct {
 	// for S3 Bucket Key.
 	//
 	// This functionality is not supported for directory buckets.
-	BucketKeyEnabled *bool
+	BucketKeyEnabled bool
 
 	// Can be used to specify caching behavior along the request/reply chain. For more
 	// information, see [http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.9].
@@ -162,7 +162,13 @@ type PutObjectInput struct {
 	// default checksum algorithm that's used for performance.
 	//
 	// [Checking object integrity]: https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
-	ChecksumAlgorithm ChecksumAlgorithm
+	ChecksumAlgorithm types.ChecksumAlgorithm
+
+	// Size of the body in bytes. This parameter is useful when the size of the body
+	// cannot be determined automatically. For more information, see [https://www.rfc-editor.org/rfc/rfc9110.html#name-content-length].
+	//
+	// [https://www.rfc-editor.org/rfc/rfc9110.html#name-content-length]: https://www.rfc-editor.org/rfc/rfc9110.html#name-content-length
+	ContentLength int64
 
 	// Specifies presentational information for the object. For more information, see [https://www.rfc-editor.org/rfc/rfc6266#section-4].
 	//
@@ -233,12 +239,12 @@ type PutObjectInput struct {
 	// This functionality is not supported for directory buckets.
 	//
 	// [Object Lock]: https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock.html
-	ObjectLockLegalHoldStatus ObjectLockLegalHoldStatus
+	ObjectLockLegalHoldStatus types.ObjectLockLegalHoldStatus
 
 	// The Object Lock mode that you want to apply to this object.
 	//
 	// This functionality is not supported for directory buckets.
-	ObjectLockMode ObjectLockMode
+	ObjectLockMode types.ObjectLockMode
 
 	// The date and time when you want this object's Object Lock to expire. Must be
 	// formatted as a timestamp parameter.
@@ -256,7 +262,7 @@ type PutObjectInput struct {
 	// This functionality is not supported for directory buckets.
 	//
 	// [Downloading Objects in Requester Pays Buckets]: https://docs.aws.amazon.com/AmazonS3/latest/dev/ObjectsinRequesterPaysBuckets.html
-	RequestPayer RequestPayer
+	RequestPayer types.RequestPayer
 
 	// Specifies the algorithm to use when encrypting the object (for example, AES256 ).
 	//
@@ -312,7 +318,7 @@ type PutObjectInput struct {
 	// Amazon S3 managed keys (SSE-S3) ( AES256 ) value is supported.
 	//
 	// [Using Server-Side Encryption]: https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingServerSideEncryption.html
-	ServerSideEncryption ServerSideEncryption
+	ServerSideEncryption types.ServerSideEncryption
 
 	// By default, Amazon S3 uses the STANDARD Storage Class to store newly created
 	// objects. The STANDARD storage class provides high durability and high
@@ -325,7 +331,7 @@ type PutObjectInput struct {
 	//   - Amazon S3 on Outposts only uses the OUTPOSTS Storage Class.
 	//
 	// [Storage Classes]: https://docs.aws.amazon.com/AmazonS3/latest/dev/storage-class-intro.html
-	StorageClass StorageClass
+	StorageClass types.StorageClass
 
 	// The tag-set for the object. The tag-set must be encoded as URL Query
 	// parameters. (For example, "Key1=Value1")
@@ -359,95 +365,71 @@ type PutObjectInput struct {
 	WebsiteRedirectLocation string
 }
 
-func (i PutObjectInput) mapSingleUploadInput(body io.Reader, checksumAlgorithm ChecksumAlgorithm) *s3.PutObjectInput {
+// map non-zero string to *string
+func nzstring(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return aws.String(v)
+}
+
+// map non-zero Time to *Time
+func nztime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return aws.Time(t)
+}
+
+func (i PutObjectInput) mapSingleUploadInput(body io.Reader, checksumAlgorithm types.ChecksumAlgorithm) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(i.Bucket),
 		Key:    aws.String(i.Key),
 		Body:   body,
 	}
 	if i.ACL != "" {
-		input.ACL = types.ObjectCannedACL(i.ACL)
-	}
-	if i.BucketKeyEnabled != nil {
-		input.BucketKeyEnabled = i.BucketKeyEnabled
-	}
-	if i.CacheControl != "" {
-		input.CacheControl = aws.String(i.CacheControl)
+		input.ACL = s3types.ObjectCannedACL(i.ACL)
 	}
 	if i.ChecksumAlgorithm != "" {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithm(i.ChecksumAlgorithm)
+		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(i.ChecksumAlgorithm)
 	} else {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithm(checksumAlgorithm)
-	}
-	if i.ContentDisposition != "" {
-		input.ContentDisposition = aws.String(i.ContentDisposition)
-	}
-	if i.ContentEncoding != "" {
-		input.ContentEncoding = aws.String(i.ContentEncoding)
-	}
-	if i.ContentLanguage != "" {
-		input.ContentLanguage = aws.String(i.ContentLanguage)
-	}
-	if i.ContentType != "" {
-		input.ContentType = aws.String(i.ContentType)
-	}
-	if i.ExpectedBucketOwner != "" {
-		input.ExpectedBucketOwner = aws.String(i.ExpectedBucketOwner)
-	}
-	if i.GrantFullControl != "" {
-		input.GrantFullControl = aws.String(i.GrantFullControl)
-	}
-	if i.GrantRead != "" {
-		input.GrantRead = aws.String(i.GrantRead)
-	}
-	if i.GrantReadACP != "" {
-		input.GrantReadACP = aws.String(i.GrantReadACP)
-	}
-	if i.GrantWriteACP != "" {
-		input.GrantWriteACP = aws.String(i.GrantWriteACP)
-	}
-	if i.Metadata != nil {
-		input.Metadata = i.Metadata
+		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(checksumAlgorithm)
 	}
 	if i.ObjectLockLegalHoldStatus != "" {
-		input.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatus(i.ObjectLockLegalHoldStatus)
+		input.ObjectLockLegalHoldStatus = s3types.ObjectLockLegalHoldStatus(i.ObjectLockLegalHoldStatus)
 	}
 	if i.ObjectLockMode != "" {
-		input.ObjectLockMode = types.ObjectLockMode(i.ObjectLockMode)
+		input.ObjectLockMode = s3types.ObjectLockMode(i.ObjectLockMode)
 	}
 	if i.RequestPayer != "" {
-		input.RequestPayer = types.RequestPayer(i.RequestPayer)
-	}
-	if i.SSECustomerAlgorithm != "" {
-		input.SSECustomerAlgorithm = aws.String(i.SSECustomerAlgorithm)
-	}
-	if i.SSECustomerKey != "" {
-		input.SSECustomerKey = aws.String(i.SSECustomerKey)
-	}
-	if i.SSEKMSEncryptionContext != "" {
-		input.SSEKMSEncryptionContext = aws.String(i.SSEKMSEncryptionContext)
-	}
-	if i.SSEKMSKeyID != "" {
-		input.SSEKMSKeyId = aws.String(i.SSEKMSKeyID)
+		input.RequestPayer = s3types.RequestPayer(i.RequestPayer)
 	}
 	if i.ServerSideEncryption != "" {
-		input.ServerSideEncryption = types.ServerSideEncryption(i.ServerSideEncryption)
+		input.ServerSideEncryption = s3types.ServerSideEncryption(i.ServerSideEncryption)
 	}
 	if i.StorageClass != "" {
-		input.StorageClass = types.StorageClass(i.StorageClass)
+		input.StorageClass = s3types.StorageClass(i.StorageClass)
 	}
-	if i.Tagging != "" {
-		input.Tagging = aws.String(i.Tagging)
-	}
-	if i.WebsiteRedirectLocation != "" {
-		input.WebsiteRedirectLocation = aws.String(i.WebsiteRedirectLocation)
-	}
-	if !i.Expires.IsZero() {
-		input.Expires = aws.Time(i.Expires)
-	}
-	if !i.ObjectLockRetainUntilDate.IsZero() {
-		input.ObjectLockRetainUntilDate = aws.Time(i.ObjectLockRetainUntilDate)
-	}
+	input.BucketKeyEnabled = aws.Bool(i.BucketKeyEnabled)
+	input.CacheControl = nzstring(i.CacheControl)
+	input.ContentDisposition = nzstring(i.ContentDisposition)
+	input.ContentEncoding = nzstring(i.ContentEncoding)
+	input.ContentLanguage = nzstring(i.ContentLanguage)
+	input.ContentType = nzstring(i.ContentType)
+	input.ExpectedBucketOwner = nzstring(i.ExpectedBucketOwner)
+	input.GrantFullControl = nzstring(i.GrantFullControl)
+	input.GrantRead = nzstring(i.GrantRead)
+	input.GrantReadACP = nzstring(i.GrantReadACP)
+	input.GrantWriteACP = nzstring(i.GrantWriteACP)
+	input.Metadata = i.Metadata
+	input.SSECustomerAlgorithm = nzstring(i.SSECustomerAlgorithm)
+	input.SSECustomerKey = nzstring(i.SSECustomerKey)
+	input.SSEKMSEncryptionContext = nzstring(i.SSEKMSEncryptionContext)
+	input.SSEKMSKeyId = nzstring(i.SSEKMSKeyID)
+	input.Tagging = nzstring(i.Tagging)
+	input.WebsiteRedirectLocation = nzstring(i.WebsiteRedirectLocation)
+	input.Expires = nztime(i.Expires)
+	input.ObjectLockRetainUntilDate = nztime(i.ObjectLockRetainUntilDate)
 	return input
 }
 
@@ -457,88 +439,48 @@ func (i PutObjectInput) mapCreateMultipartUploadInput() *s3.CreateMultipartUploa
 		Key:    aws.String(i.Key),
 	}
 	if i.ACL != "" {
-		input.ACL = types.ObjectCannedACL(i.ACL)
-	}
-	if i.BucketKeyEnabled != nil {
-		input.BucketKeyEnabled = i.BucketKeyEnabled
-	}
-	if i.CacheControl != "" {
-		input.CacheControl = aws.String(i.CacheControl)
+		input.ACL = s3types.ObjectCannedACL(i.ACL)
 	}
 	if i.ChecksumAlgorithm != "" {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithm(i.ChecksumAlgorithm)
+		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(i.ChecksumAlgorithm)
 	} else {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithm(i.ChecksumAlgorithm)
-	}
-	if i.ContentDisposition != "" {
-		input.ContentDisposition = aws.String(i.ContentDisposition)
-	}
-	if i.ContentEncoding != "" {
-		input.ContentEncoding = aws.String(i.ContentEncoding)
-	}
-	if i.ContentLanguage != "" {
-		input.ContentLanguage = aws.String(i.ContentLanguage)
-	}
-	if i.ContentType != "" {
-		input.ContentType = aws.String(i.ContentType)
-	}
-	if i.ExpectedBucketOwner != "" {
-		input.ExpectedBucketOwner = aws.String(i.ExpectedBucketOwner)
-	}
-	if i.GrantFullControl != "" {
-		input.GrantFullControl = aws.String(i.GrantFullControl)
-	}
-	if i.GrantRead != "" {
-		input.GrantRead = aws.String(i.GrantRead)
-	}
-	if i.GrantReadACP != "" {
-		input.GrantReadACP = aws.String(i.GrantReadACP)
-	}
-	if i.GrantWriteACP != "" {
-		input.GrantWriteACP = aws.String(i.GrantWriteACP)
-	}
-	if i.Metadata != nil {
-		input.Metadata = i.Metadata
+		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(i.ChecksumAlgorithm)
 	}
 	if i.ObjectLockLegalHoldStatus != "" {
-		input.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatus(i.ObjectLockLegalHoldStatus)
+		input.ObjectLockLegalHoldStatus = s3types.ObjectLockLegalHoldStatus(i.ObjectLockLegalHoldStatus)
 	}
 	if i.ObjectLockMode != "" {
-		input.ObjectLockMode = types.ObjectLockMode(i.ObjectLockMode)
+		input.ObjectLockMode = s3types.ObjectLockMode(i.ObjectLockMode)
 	}
 	if i.RequestPayer != "" {
-		input.RequestPayer = types.RequestPayer(i.RequestPayer)
-	}
-	if i.SSECustomerAlgorithm != "" {
-		input.SSECustomerAlgorithm = aws.String(i.SSECustomerAlgorithm)
-	}
-	if i.SSECustomerKey != "" {
-		input.SSECustomerKey = aws.String(i.SSECustomerKey)
-	}
-	if i.SSEKMSEncryptionContext != "" {
-		input.SSEKMSEncryptionContext = aws.String(i.SSEKMSEncryptionContext)
-	}
-	if i.SSEKMSKeyID != "" {
-		input.SSEKMSKeyId = aws.String(i.SSEKMSKeyID)
+		input.RequestPayer = s3types.RequestPayer(i.RequestPayer)
 	}
 	if i.ServerSideEncryption != "" {
-		input.ServerSideEncryption = types.ServerSideEncryption(i.ServerSideEncryption)
+		input.ServerSideEncryption = s3types.ServerSideEncryption(i.ServerSideEncryption)
 	}
 	if i.StorageClass != "" {
-		input.StorageClass = types.StorageClass(i.StorageClass)
+		input.StorageClass = s3types.StorageClass(i.StorageClass)
 	}
-	if i.Tagging != "" {
-		input.Tagging = aws.String(i.Tagging)
-	}
-	if i.WebsiteRedirectLocation != "" {
-		input.WebsiteRedirectLocation = aws.String(i.WebsiteRedirectLocation)
-	}
-	if !i.Expires.IsZero() {
-		input.Expires = aws.Time(i.Expires)
-	}
-	if !i.ObjectLockRetainUntilDate.IsZero() {
-		input.ObjectLockRetainUntilDate = aws.Time(i.ObjectLockRetainUntilDate)
-	}
+	input.BucketKeyEnabled = aws.Bool(i.BucketKeyEnabled)
+	input.CacheControl = nzstring(i.CacheControl)
+	input.ContentDisposition = nzstring(i.ContentDisposition)
+	input.ContentEncoding = nzstring(i.ContentEncoding)
+	input.ContentLanguage = nzstring(i.ContentLanguage)
+	input.ContentType = nzstring(i.ContentType)
+	input.ExpectedBucketOwner = nzstring(i.ExpectedBucketOwner)
+	input.GrantFullControl = nzstring(i.GrantFullControl)
+	input.GrantRead = nzstring(i.GrantRead)
+	input.GrantReadACP = nzstring(i.GrantReadACP)
+	input.GrantWriteACP = nzstring(i.GrantWriteACP)
+	input.Metadata = i.Metadata
+	input.SSECustomerAlgorithm = nzstring(i.SSECustomerAlgorithm)
+	input.SSECustomerKey = nzstring(i.SSECustomerKey)
+	input.SSEKMSEncryptionContext = nzstring(i.SSEKMSEncryptionContext)
+	input.SSEKMSKeyId = nzstring(i.SSEKMSKeyID)
+	input.Tagging = nzstring(i.Tagging)
+	input.WebsiteRedirectLocation = nzstring(i.WebsiteRedirectLocation)
+	input.Expires = nztime(i.Expires)
+	input.ObjectLockRetainUntilDate = nztime(i.ObjectLockRetainUntilDate)
 	return input
 }
 
@@ -548,24 +490,18 @@ func (i PutObjectInput) mapCompleteMultipartUploadInput(uploadID *string, comple
 		Key:      aws.String(i.Key),
 		UploadId: uploadID,
 	}
-	if i.ExpectedBucketOwner != "" {
-		input.ExpectedBucketOwner = aws.String(i.ExpectedBucketOwner)
-	}
 	if i.RequestPayer != "" {
-		input.RequestPayer = types.RequestPayer(i.RequestPayer)
+		input.RequestPayer = s3types.RequestPayer(i.RequestPayer)
 	}
-	if i.SSECustomerAlgorithm != "" {
-		input.SSECustomerAlgorithm = aws.String(i.SSECustomerAlgorithm)
-	}
-	if i.SSECustomerKey != "" {
-		input.SSECustomerKey = aws.String(i.SSECustomerKey)
-	}
-	var parts []types.CompletedPart
+	input.ExpectedBucketOwner = nzstring(i.ExpectedBucketOwner)
+	input.SSECustomerAlgorithm = nzstring(i.SSECustomerAlgorithm)
+	input.SSECustomerKey = nzstring(i.SSECustomerKey)
+	var parts []s3types.CompletedPart
 	for _, part := range completedParts {
-		parts = append(parts, part.mapCompletedPart())
+		parts = append(parts, part.MapCompletedPart())
 	}
 	if parts != nil {
-		input.MultipartUpload = &types.CompletedMultipartUpload{Parts: parts}
+		input.MultipartUpload = &s3types.CompletedMultipartUpload{Parts: parts}
 	}
 	return input
 }
@@ -579,20 +515,14 @@ func (i PutObjectInput) mapUploadPartInput(body io.Reader, partNum *int32, uploa
 		UploadId:   uploadID,
 	}
 	if i.ChecksumAlgorithm != "" {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithm(i.ChecksumAlgorithm)
-	}
-	if i.ExpectedBucketOwner != "" {
-		input.ExpectedBucketOwner = aws.String(i.ExpectedBucketOwner)
+		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(i.ChecksumAlgorithm)
 	}
 	if i.RequestPayer != "" {
-		input.RequestPayer = types.RequestPayer(i.RequestPayer)
+		input.RequestPayer = s3types.RequestPayer(i.RequestPayer)
 	}
-	if i.SSECustomerAlgorithm != "" {
-		input.SSECustomerAlgorithm = aws.String(i.SSECustomerAlgorithm)
-	}
-	if i.SSECustomerKey != "" {
-		input.SSECustomerKey = aws.String(i.SSECustomerKey)
-	}
+	input.ExpectedBucketOwner = nzstring(i.ExpectedBucketOwner)
+	input.SSECustomerAlgorithm = nzstring(i.SSECustomerAlgorithm)
+	input.SSECustomerKey = nzstring(i.SSECustomerKey)
 	return input
 }
 
@@ -616,7 +546,7 @@ type PutObjectOutput struct {
 	// The list of parts that were uploaded and their checksums. Will be empty
 	// if multipart upload was not used, and the object was uploaded as a
 	// single PutObject call.
-	CompletedParts []CompletedPart
+	CompletedParts []types.CompletedPart
 
 	// Indicates whether the uploaded object uses an S3 Bucket Key for server-side
 	// encryption with Amazon Web Services KMS (SSE-KMS).
@@ -649,7 +579,7 @@ type PutObjectOutput struct {
 
 	// If present, indicates that the requester was successfully charged for the
 	// request.
-	RequestCharged RequestCharged
+	RequestCharged types.RequestCharged
 
 	// If present, specifies the ID of the Amazon Web Services Key Management Service
 	// (Amazon Web Services KMS) symmetric customer managed customer master key (CMK)
@@ -660,7 +590,7 @@ type PutObjectOutput struct {
 	// encryption key or an Amazon Web Services KMS customer master key (CMK) in your
 	// initiate multipart upload request, the response includes this header. It
 	// confirms the encryption algorithm that Amazon S3 used to encrypt the object.
-	ServerSideEncryption ServerSideEncryption
+	ServerSideEncryption types.ServerSideEncryption
 
 	// The version of the object that was uploaded. Will only be populated if
 	// the S3 Bucket is versioned. If the bucket is not versioned this field
@@ -681,9 +611,9 @@ func (o *PutObjectOutput) mapFromPutObjectOutput(out *s3.PutObjectOutput, bucket
 	o.Expiration = aws.ToString(out.Expiration)
 	o.Bucket = bucket
 	o.Key = key
-	o.RequestCharged = RequestCharged(out.RequestCharged)
+	o.RequestCharged = types.RequestCharged(out.RequestCharged)
 	o.SSEKMSKeyID = aws.ToString(out.SSEKMSKeyId)
-	o.ServerSideEncryption = ServerSideEncryption(out.ServerSideEncryption)
+	o.ServerSideEncryption = types.ServerSideEncryption(out.ServerSideEncryption)
 	o.VersionID = aws.ToString(out.VersionId)
 	o.ResultMetadata = out.ResultMetadata.Clone()
 }
@@ -700,9 +630,9 @@ func (o *PutObjectOutput) mapFromCompleteMultipartUploadOutput(out *s3.CompleteM
 	o.Expiration = aws.ToString(out.Expiration)
 	o.Bucket = bucket
 	o.Key = aws.ToString(out.Key)
-	o.RequestCharged = RequestCharged(out.RequestCharged)
+	o.RequestCharged = types.RequestCharged(out.RequestCharged)
 	o.SSEKMSKeyID = aws.ToString(out.SSEKMSKeyId)
-	o.ServerSideEncryption = ServerSideEncryption(out.ServerSideEncryption)
+	o.ServerSideEncryption = types.ServerSideEncryption(out.ServerSideEncryption)
 	o.VersionID = aws.ToString(out.VersionId)
 	o.ResultMetadata = out.ResultMetadata
 }
@@ -713,10 +643,8 @@ func (o *PutObjectOutput) mapFromCompleteMultipartUploadOutput(out *s3.CompleteM
 // Options parameters.
 //
 // Additional functional options can be provided to configure the individual
-// upload. These options are copies of the Uploader instance Upload is called from.
-// Modifying the options will not impact the original Uploader instance.
-//
-// It is safe to call this method concurrently across goroutines.
+// upload. These options are copies of the original Options instance, the client of which PutObject is called from.
+// Modifying the options will not impact the original Client and Options instance.
 func (c *Client) PutObject(ctx context.Context, input *PutObjectInput, opts ...func(*Options)) (*PutObjectOutput, error) {
 	i := uploader{in: input, options: c.options.Copy()}
 	for _, opt := range opts {
@@ -765,13 +693,42 @@ func (u *uploader) upload(ctx context.Context) (*PutObjectOutput, error) {
 }
 
 func (u *uploader) init() error {
-	partSize := u.options.PartSizeBytes
-	if partSize < DefaultPartSizeBytes {
-		return fmt.Errorf("part size must be at least %d bytes", DefaultPartSizeBytes)
+	if err := u.initSize(); err != nil {
+		return err
 	}
-	u.partPool = newByteSlicePool(partSize)
+	u.partPool = newByteSlicePool(u.options.PartSizeBytes)
 	u.partPool.ModifyCapacity(u.options.Concurrency + 1)
 
+	return nil
+}
+
+// initSize checks user configured partsize and up-size it if calculated part count exceeds max value
+func (u *uploader) initSize() error {
+	if u.options.PartSizeBytes < minPartSizeBytes {
+		return fmt.Errorf("part size must be at least %d bytes", minPartSizeBytes)
+	}
+
+	var bodySize int64
+	switch r := u.in.Body.(type) {
+	case io.Seeker:
+		n, err := types.SeekerLen(r)
+		if err != nil {
+			return err
+		}
+		bodySize = n
+	default:
+		if l := u.in.ContentLength; l > 0 {
+			bodySize = l
+		}
+	}
+
+	// Try to adjust partSize if it is too small and account for
+	// integer division truncation.
+	if bodySize/u.options.PartSizeBytes >= int64(defaultMaxUploadParts) {
+		// Add one to the part size to account for remainders
+		// during the size calculation. e.g odd number of bytes.
+		u.options.PartSizeBytes = (bodySize / int64(defaultMaxUploadParts)) + 1
+	}
 	return nil
 }
 
@@ -788,36 +745,6 @@ func (u *uploader) singleUpload(ctx context.Context, r io.Reader, cleanUp func()
 	var output PutObjectOutput
 	output.mapFromPutObjectOutput(out, u.in.Bucket, u.in.Key)
 	return &output, nil
-}
-
-type httpClient interface {
-	Do(r *http.Request) (*http.Response, error)
-}
-
-type recordLocationClient struct {
-	httpClient
-	location string
-}
-
-func (c *recordLocationClient) WrapClient() func(*s3.Options) {
-	return func(o *s3.Options) {
-		c.httpClient = o.HTTPClient
-		o.HTTPClient = c
-	}
-}
-
-func (c *recordLocationClient) Do(r *http.Request) (resp *http.Response, err error) {
-	resp, err = c.httpClient.Do(r)
-	if err != nil {
-		return resp, err
-	}
-
-	if resp.Request != nil && resp.Request.URL != nil {
-		url := *resp.Request.URL
-		url.RawQuery = ""
-		c.location = url.String()
-	}
-	return resp, err
 }
 
 // nextReader reads the next chunk of data from input Body
@@ -859,7 +786,7 @@ type ulChunk struct {
 	cleanup func()
 }
 
-type completedParts []CompletedPart
+type completedParts []types.CompletedPart
 
 func (cp completedParts) Len() int {
 	return len(cp)
@@ -945,8 +872,8 @@ func (u *multiUploader) shouldContinue(part int32, nextChunkLen int, err error) 
 	}
 
 	// This upload exceeded maximum number of supported parts, error now.
-	if part > DefaultMaxUploadParts {
-		return false, fmt.Errorf(fmt.Sprintf("exceeded total allowed S3 limit MaxUploadParts (%d). Adjust PartSize to fit in this limit", DefaultMaxUploadParts))
+	if part > defaultMaxUploadParts {
+		return false, fmt.Errorf(fmt.Sprintf("exceeded total allowed S3 limit MaxUploadParts (%d). Adjust PartSize to fit in this limit", defaultMaxUploadParts))
 	}
 
 	return true, err
@@ -982,23 +909,14 @@ func (u *multiUploader) send(ctx context.Context, c ulChunk, clientOptions ...fu
 		return err
 	}
 
-	var completed CompletedPart
-	completed.mapFrom(resp, c.partNum)
+	var completed types.CompletedPart
+	completed.MapFrom(resp, c.partNum)
 
 	u.m.Lock()
 	u.parts = append(u.parts, completed)
 	u.m.Unlock()
 
 	return nil
-}
-
-func (c *CompletedPart) mapFrom(resp *s3.UploadPartOutput, partNum *int32) {
-	c.ChecksumCRC32 = resp.ChecksumCRC32
-	c.ChecksumCRC32C = resp.ChecksumCRC32C
-	c.ChecksumSHA1 = resp.ChecksumSHA1
-	c.ChecksumSHA256 = resp.ChecksumSHA256
-	c.ETag = resp.ETag
-	c.PartNumber = partNum
 }
 
 // geterr is a thread-safe getter for the error object
@@ -1022,7 +940,6 @@ func (u *multiUploader) fail(ctx context.Context, clientOptions ...func(*s3.Opti
 	params := u.in.mapAbortMultipartUploadInput(u.uploadID)
 	_, err := u.options.S3.AbortMultipartUpload(ctx, params, clientOptions...)
 	if err != nil {
-		//logMessage(u.cfg.S3, aws.LogDebug, fmt.Sprintf("failed to abort multipart upload, %v", err))
 		u.seterr(fmt.Errorf("failed to abort multipart upload (%v), triggered after multipart upload failed: %v", err, u.geterr()))
 	}
 }
