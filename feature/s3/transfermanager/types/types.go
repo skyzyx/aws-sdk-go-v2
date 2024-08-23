@@ -304,6 +304,7 @@ type CompletedPart struct {
 	PartNumber *int32
 }
 
+// MapCompletedPart maps CompletedPart to s3 types
 func (cp CompletedPart) MapCompletedPart() types.CompletedPart {
 	return types.CompletedPart{
 		ChecksumCRC32:  cp.ChecksumCRC32,
@@ -315,13 +316,14 @@ func (cp CompletedPart) MapCompletedPart() types.CompletedPart {
 	}
 }
 
-func (c *CompletedPart) MapFrom(resp *s3.UploadPartOutput, partNum *int32) {
-	c.ChecksumCRC32 = resp.ChecksumCRC32
-	c.ChecksumCRC32C = resp.ChecksumCRC32C
-	c.ChecksumSHA1 = resp.ChecksumSHA1
-	c.ChecksumSHA256 = resp.ChecksumSHA256
-	c.ETag = resp.ETag
-	c.PartNumber = partNum
+// MapFrom set CompletedPart fields from s3 UploadPartOutput
+func (cp *CompletedPart) MapFrom(resp *s3.UploadPartOutput, partNum *int32) {
+	cp.ChecksumCRC32 = resp.ChecksumCRC32
+	cp.ChecksumCRC32C = resp.ChecksumCRC32C
+	cp.ChecksumSHA1 = resp.ChecksumSHA1
+	cp.ChecksumSHA256 = resp.ChecksumSHA256
+	cp.ETag = resp.ETag
+	cp.PartNumber = partNum
 }
 
 // RequestCharged indicates that the requester was successfully charged for the request.
